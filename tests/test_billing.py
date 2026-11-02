@@ -6,7 +6,7 @@ import pytest
 from ev_billing.models import BillingInterval, ChargingSession, MeterReading
 from ev_billing.network import ChargingNetwork
 from ev_billing.tariffs import rate_for_timestamp
-from ev_billing.billing import build_billing_intervals
+from ev_billing.billing import build_billing_intervals, prepare_meter_readings
 
 
 def test_charging_sessions_have_independent_meter_reading_lists():
@@ -232,3 +232,43 @@ def test_build_billing_intervals_crosses_midnight_at_tariff_boundaries():
             Decimal("0.28"),
         ),
     ]
+
+
+def test_prepare_meter_readings_sorts_copy_and_filters_rollbacks():
+    ten_am = MeterReading(datetime(2026, 1, 1, 10, 0), Decimal("10"))
+    eleven_am = MeterReading(datetime(2026, 1, 1, 11, 0), Decimal("5"))
+    noon = MeterReading(datetime(2026, 1, 1, 12, 0), Decimal("8"))
+    readings = [eleven_am, noon, ten_am]
+
+    prepared = prepare_meter_readings(readings)
+
+    assert prepared == [ten_am]
+    assert readings == [eleven_am, noon, ten_am]
+    assert prepared is not readings
+
+
+def test_prepare_meter_readings_compares_against_last_accepted_reading():
+    readings = [
+        MeterReading(datetime(2026, 1, 1, 11, 0), Decimal("5")),
+        MeterReading(datetime(2026, 1, 1, 10, 0), Decimal("10")),
+        MeterReading(datetime(2026, 1, 1, 12, 0), Decimal("8")),
+    ]
+
+    prepared = prepare_meter_readings(readings)
+
+    assert [reading.timestamp for reading in prepared] == [
+        datetime(2026, 1, 1, 10, 0)
+    ]
+
+
+def test_prepare_meter_readings_keeps_billable_increase_after_rollback():
+    readings = [
+        MeterReading(datetime(2026, 1, 1, 11, 0), Decimal("8")),
+        MeterReading(datetime(2026, 1, 1, 10, 0), Decimal("10")),
+        MeterReading(datetime(2026, 1, 1, 12, 0), Decimal("14")),
+    ]
+
+    prepared = prepare_meter_readings(readings)
+
+    assert prepared == [readings[1], readings[2]]
+    assert prepared[-1].cumulative_kwh - prepared[0].cumulative_kwh == Decimal("4")

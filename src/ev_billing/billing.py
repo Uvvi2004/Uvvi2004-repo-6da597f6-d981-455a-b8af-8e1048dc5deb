@@ -9,6 +9,17 @@ from .tariffs import rate_for_timestamp
 _TARIFF_BOUNDARIES = (time(6, 0), time(16, 0), time(21, 0), time(22, 0))
 
 
+def prepare_meter_readings(
+    readings: Sequence[MeterReading],
+) -> list[MeterReading]:
+    """Sort a copy of readings and discard cumulative rollback readings."""
+    prepared: list[MeterReading] = []
+    for reading in sorted(readings, key=lambda item: item.timestamp):
+        if not prepared or reading.cumulative_kwh >= prepared[-1].cumulative_kwh:
+            prepared.append(reading)
+    return prepared
+
+
 def _next_tariff_boundary(at: datetime, end: datetime) -> datetime:
     candidates = []
     for day_offset in (0, 1):
