@@ -128,3 +128,32 @@ def test_record_meter_reading_replaces_same_timestamp_and_counts_replacement():
     assert session.meter_readings == [replacement]
     assert replacement.cumulative_kwh == Decimal("1.5")
     assert session.replacement_count == 1
+
+
+def test_stop_session_rejects_unknown_session():
+    with pytest.raises(ValueError, match="not registered"):
+        ChargingNetwork().stopSession(
+            "unknown", datetime(2026, 1, 1, 12, 1)
+        )
+
+
+def test_stop_session_rejects_time_before_start_without_changing_session():
+    network, session_id = _network_with_session()
+    session = network.sessions[session_id]
+
+    with pytest.raises(ValueError, match="before it starts"):
+        network.stopSession(session_id, datetime(2026, 1, 1, 11, 59))
+
+    assert session.stopped_at is None
+    assert session.status == "running"
+
+
+def test_stop_session_sets_stop_time_and_status():
+    network, session_id = _network_with_session()
+    stopped_at = datetime(2026, 1, 1, 12, 30)
+
+    network.stopSession(session_id, stopped_at)
+
+    session = network.sessions[session_id]
+    assert session.stopped_at == stopped_at
+    assert session.status == "stopped"

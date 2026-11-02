@@ -72,3 +72,15 @@ class ChargingNetwork:
 
         session.meter_readings.append(reading)
         return reading
+
+    def stopSession(self, session_id: str, stopped_at: datetime) -> None:
+        """Stop a session at the given time."""
+        if session_id not in self.sessions:
+            raise ValueError(f"Session is not registered: {session_id}")
+
+        session = self.sessions[session_id]
+        if stopped_at < session.started_at:
+            raise ValueError("Session cannot stop before it starts")
+
+        session.stopped_at = stopped_at
+        session.status = "stopped"
