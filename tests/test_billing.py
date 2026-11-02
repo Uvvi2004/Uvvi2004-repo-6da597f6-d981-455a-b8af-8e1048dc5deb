@@ -3,9 +3,10 @@ from decimal import Decimal
 
 import pytest
 
-from ev_billing.models import ChargingSession, MeterReading
+from ev_billing.models import BillingInterval, ChargingSession, MeterReading
 from ev_billing.network import ChargingNetwork
 from ev_billing.tariffs import rate_for_timestamp
+from ev_billing.billing import build_billing_intervals
 
 
 def test_charging_sessions_have_independent_meter_reading_lists():
@@ -177,3 +178,57 @@ def test_rate_for_timestamp_boundaries_and_adjacent_times(
     hour, minute, expected_rate
 ):
     assert rate_for_timestamp(datetime(2026, 1, 1, hour, minute)) == expected_rate
+
+
+def test_build_billing_intervals_splits_at_peak_boundary():
+    readings = [
+        MeterReading(datetime(2026, 1, 1, 15, 30), Decimal("0")),
+        MeterReading(datetime(2026, 1, 1, 16, 30), Decimal("40")),
+    ]
+
+    intervals = build_billing_intervals(readings)
+
+    assert intervals == [
+        BillingInterval(
+            datetime(2026, 1, 1, 15, 30),
+            datetime(2026, 1, 1, 16, 0),
+            Decimal("20"),
+            Decimal("0.28"),
+        ),
+        BillingInterval(
+            datetime(2026, 1, 1, 16, 0),
+            datetime(2026, 1, 1, 16, 30),
+            Decimal("20"),
+            Decimal("0.42"),
+        ),
+    ]
+
+
+def test_build_billing_intervals_crosses_midnight_at_tariff_boundaries():
+    readings = [
+        MeterReading(datetime(2026, 1, 1, 21, 30), Decimal("0")),
+        MeterReading(datetime(2026, 1, 2, 6, 30), Decimal("54")),
+    ]
+
+    intervals = build_billing_intervals(readings)
+
+    assert intervals == [
+        BillingInterval(
+            datetime(2026, 1, 1, 21, 30),
+            datetime(2026, 1, 1, 22, 0),
+            Decimal("3"),
+            Decimal("0.28"),
+        ),
+        BillingInterval(
+            datetime(2026, 1, 1, 22, 0),
+            datetime(2026, 1, 2, 6, 0),
+            Decimal("48"),
+            Decimal("0.18"),
+        ),
+        BillingInterval(
+            datetime(2026, 1, 2, 6, 0),
+            datetime(2026, 1, 2, 6, 30),
+            Decimal("3"),
+            Decimal("0.28"),
+        ),
+    ]

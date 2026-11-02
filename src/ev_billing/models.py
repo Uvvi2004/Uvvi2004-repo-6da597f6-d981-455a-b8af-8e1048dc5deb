@@ -20,6 +20,16 @@ class MeterReading:
 
 
 @dataclass
+class BillingInterval:
+    """A period billed at one tariff rate."""
+
+    start_time: datetime
+    end_time: datetime
+    energy: Decimal
+    rate: Decimal
+
+
+@dataclass
 class ChargingSession:
     """A charging session and its readings in insertion order."""
 
