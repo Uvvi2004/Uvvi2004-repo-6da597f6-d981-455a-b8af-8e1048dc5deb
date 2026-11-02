@@ -161,6 +161,20 @@ def test_stop_session_sets_stop_time_and_status():
     assert session.status == "stopped"
 
 
+def test_stop_session_discards_readings_after_stop_time():
+    network, session_id = _network_with_session()
+    before_stop = datetime(2026, 1, 1, 12, 30)
+    after_stop = datetime(2026, 1, 1, 13, 30)
+    network.recordMeterReading(session_id, before_stop, Decimal("1"))
+    network.recordMeterReading(session_id, after_stop, Decimal("2"))
+
+    network.stopSession(session_id, datetime(2026, 1, 1, 13, 0))
+
+    assert network.sessions[session_id].meter_readings == [
+        MeterReading(before_stop, Decimal("1"))
+    ]
+
+
 @pytest.mark.parametrize(
     ("hour", "minute", "expected_rate"),
     [
@@ -272,3 +286,109 @@ def test_prepare_meter_readings_keeps_billable_increase_after_rollback():
 
     assert prepared == [readings[1], readings[2]]
     assert prepared[-1].cumulative_kwh - prepared[0].cumulative_kwh == Decimal("4")
+
+
+def test_calculate_invoice_rounds_lines_and_adds_session_fee():
+    network, session_id = _network_with_session()
+    network.recordMeterReading(
+        session_id, datetime(2026, 1, 1, 12, 0), Decimal("0")
+    )
+    network.recordMeterReading(
+        session_id, datetime(2026, 1, 1, 13, 0), Decimal("1.2345")
+    )
+    network.stopSession(session_id, datetime(2026, 1, 1, 13, 30))
+
+    invoice = network.calculateInvoice(session_id)
+
+    assert len(invoice.lines) == 1
+    assert invoice.lines[0].energy == Decimal("1.235")
+    assert invoice.lines[0].amount == Decimal("0.35")
+    assert invoice.session_fee == Decimal("1.00")
+    assert invoice.total == Decimal("1.35")
+
+
+def test_calculate_invoice_rejects_unknown_session():
+    with pytest.raises(ValueError, match="not registered"):
+        ChargingNetwork().calculateInvoice("unknown")
+
+
+def test_calculate_invoice_rejects_running_session():
+    network, session_id = _network_with_session()
+
+    with pytest.raises(ValueError, match="has not stopped"):
+        network.calculateInvoice(session_id)
+
+
+def test_calculate_invoice_does_not_estimate_after_last_reading():
+    network, session_id = _network_with_session()
+    network.recordMeterReading(
+        session_id, datetime(2026, 1, 1, 12, 0), Decimal("0")
+    )
+    network.recordMeterReading(
+        session_id, datetime(2026, 1, 1, 13, 0), Decimal("2")
+    )
+    network.stopSession(session_id, datetime(2026, 1, 1, 14, 0))
+
+    invoice = network.calculateInvoice(session_id)
+
+    assert sum(line.energy for line in invoice.lines) == Decimal("2.000")
+
+
+def test_calculate_invoice_worked_peak_boundary_example():
+    network, session_id = _network_with_session()
+    network.recordMeterReading(
+        session_id, datetime(2026, 1, 1, 15, 30), Decimal("0")
+    )
+    network.recordMeterReading(
+        session_id, datetime(2026, 1, 1, 16, 30), Decimal("40")
+    )
+    network.stopSession(session_id, datetime(2026, 1, 1, 16, 30))
+
+    invoice = network.calculateInvoice(session_id)
+
+    assert [line.energy for line in invoice.lines] == [
+        Decimal("20.000"),
+        Decimal("20.000"),
+    ]
+    assert [line.rate for line in invoice.lines] == [
+        Decimal("0.28"),
+        Decimal("0.42"),
+    ]
+    assert [line.amount for line in invoice.lines] == [
+        Decimal("5.60"),
+        Decimal("8.40"),
+    ]
+    assert sum(line.amount for line in invoice.lines) == Decimal("14.00")
+    assert invoice.total == Decimal("15.00")
+
+
+def test_invoice_rounds_energy_half_up_at_invoice_level():
+    network, session_id = _network_with_session()
+    network.recordMeterReading(
+        session_id, datetime(2026, 1, 1, 12, 0), Decimal("0")
+    )
+    network.recordMeterReading(
+        session_id, datetime(2026, 1, 1, 13, 0), Decimal("1.2345")
+    )
+    network.stopSession(session_id, datetime(2026, 1, 1, 13, 0))
+
+    invoice = network.calculateInvoice(session_id)
+
+    assert invoice.lines[0].energy == Decimal("1.235")
+    assert invoice.lines[0].amount == Decimal("0.35")
+
+
+def test_invoice_rounds_line_amount_half_up_at_invoice_level():
+    network, session_id = _network_with_session()
+    network.recordMeterReading(
+        session_id, datetime(2026, 1, 1, 12, 0), Decimal("0")
+    )
+    network.recordMeterReading(
+        session_id, datetime(2026, 1, 1, 13, 0), Decimal("0.125")
+    )
+    network.stopSession(session_id, datetime(2026, 1, 1, 13, 0))
+
+    invoice = network.calculateInvoice(session_id)
+
+    assert invoice.lines[0].energy == Decimal("0.125")
+    assert invoice.lines[0].amount == Decimal("0.04")

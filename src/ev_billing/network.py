@@ -1,8 +1,9 @@
 from datetime import datetime
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 from uuid import uuid4
 
-from .models import Charger, ChargingSession, MeterReading
+from .billing import build_billing_intervals, prepare_meter_readings
+from .models import Charger, ChargingSession, Invoice, InvoiceLine, MeterReading
 
 
 class ChargingNetwork:
@@ -82,5 +83,50 @@ class ChargingNetwork:
         if stopped_at < session.started_at:
             raise ValueError("Session cannot stop before it starts")
 
+        session.meter_readings = [
+            reading
+            for reading in session.meter_readings
+            if reading.timestamp <= stopped_at
+        ]
         session.stopped_at = stopped_at
         session.status = "stopped"
+
+    def calculateInvoice(self, session_id: str) -> Invoice:
+        """Calculate an invoice for a stopped charging session."""
+        if session_id not in self.sessions:
+            raise ValueError(f"Session is not registered: {session_id}")
+
+        session = self.sessions[session_id]
+        if session.status != "stopped":
+            raise ValueError(f"Session has not stopped: {session_id}")
+
+        readings = prepare_meter_readings(session.meter_readings)
+        intervals = build_billing_intervals(readings)
+        lines: list[InvoiceLine] = []
+        subtotal = Decimal("0.00")
+
+        for interval in intervals:
+            energy = interval.energy.quantize(
+                Decimal("0.001"), rounding=ROUND_HALF_UP
+            )
+            amount = (energy * interval.rate).quantize(
+                Decimal("0.01"), rounding=ROUND_HALF_UP
+            )
+            lines.append(
+                InvoiceLine(
+                    start_time=interval.start_time,
+                    end_time=interval.end_time,
+                    energy=energy,
+                    rate=interval.rate,
+                    amount=amount,
+                )
+            )
+            subtotal += amount
+
+        session_fee = Decimal("1.00")
+        return Invoice(
+            session_id=session_id,
+            lines=lines,
+            session_fee=session_fee,
+            total=subtotal + session_fee,
+        )

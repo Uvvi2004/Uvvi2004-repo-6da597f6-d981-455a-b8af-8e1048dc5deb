@@ -30,6 +30,27 @@ class BillingInterval:
 
 
 @dataclass
+class InvoiceLine:
+    """A rounded billing interval line."""
+
+    start_time: datetime
+    end_time: datetime
+    energy: Decimal
+    rate: Decimal
+    amount: Decimal
+
+
+@dataclass
+class Invoice:
+    """An invoice for a completed charging session."""
+
+    session_id: str
+    lines: list[InvoiceLine] = field(default_factory=list)
+    session_fee: Decimal = Decimal("1.00")
+    total: Decimal = Decimal("0.00")
+
+
+@dataclass
 class ChargingSession:
     """A charging session and its readings in insertion order."""
 
