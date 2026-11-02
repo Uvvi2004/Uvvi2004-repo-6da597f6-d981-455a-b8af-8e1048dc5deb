@@ -5,6 +5,7 @@ import pytest
 
 from ev_billing.models import ChargingSession, MeterReading
 from ev_billing.network import ChargingNetwork
+from ev_billing.tariffs import rate_for_timestamp
 
 
 def test_charging_sessions_have_independent_meter_reading_lists():
@@ -157,3 +158,22 @@ def test_stop_session_sets_stop_time_and_status():
     session = network.sessions[session_id]
     assert session.stopped_at == stopped_at
     assert session.status == "stopped"
+
+
+@pytest.mark.parametrize(
+    ("hour", "minute", "expected_rate"),
+    [
+        (5, 59, Decimal("0.18")),
+        (6, 0, Decimal("0.28")),
+        (15, 59, Decimal("0.28")),
+        (16, 0, Decimal("0.42")),
+        (20, 59, Decimal("0.42")),
+        (21, 0, Decimal("0.28")),
+        (21, 59, Decimal("0.28")),
+        (22, 0, Decimal("0.18")),
+    ],
+)
+def test_rate_for_timestamp_boundaries_and_adjacent_times(
+    hour, minute, expected_rate
+):
+    assert rate_for_timestamp(datetime(2026, 1, 1, hour, minute)) == expected_rate
