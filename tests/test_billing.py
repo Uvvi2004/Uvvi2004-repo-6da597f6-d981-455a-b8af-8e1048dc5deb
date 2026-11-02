@@ -58,3 +58,73 @@ def test_network_rejects_sessions_for_unknown_chargers():
         ChargingNetwork().startSession(
             "driver-1", "charger-1", datetime(2026, 1, 1, 12, 0)
         )
+
+
+def _network_with_session():
+    network = ChargingNetwork()
+    network.registerCharger("charger-1", "site-1")
+    session_id = network.startSession(
+        "driver-1", "charger-1", datetime(2026, 1, 1, 12, 0)
+    )
+    return network, session_id
+
+
+def test_record_meter_reading_rejects_unknown_session():
+    with pytest.raises(ValueError, match="not registered"):
+        ChargingNetwork().recordMeterReading(
+            "unknown", datetime(2026, 1, 1, 12, 1), Decimal("1.0")
+        )
+
+
+def test_record_meter_reading_rejects_time_before_session_start():
+    network, session_id = _network_with_session()
+
+    with pytest.raises(ValueError, match="before session start"):
+        network.recordMeterReading(
+            session_id, datetime(2026, 1, 1, 11, 59), Decimal("1.0")
+        )
+
+
+def test_record_meter_reading_rejects_time_after_session_stop():
+    network, session_id = _network_with_session()
+    network.sessions[session_id].stopped_at = datetime(2026, 1, 1, 12, 30)
+
+    with pytest.raises(ValueError, match="after session stop"):
+        network.recordMeterReading(
+            session_id, datetime(2026, 1, 1, 12, 31), Decimal("2.0")
+        )
+
+
+def test_record_meter_reading_rejects_stopped_session():
+    network, session_id = _network_with_session()
+    network.sessions[session_id].status = "stopped"
+
+    with pytest.raises(ValueError, match="already stopped"):
+        network.recordMeterReading(
+            session_id, datetime(2026, 1, 1, 12, 1), Decimal("1.0")
+        )
+
+
+def test_record_meter_reading_preserves_insertion_order():
+    network, session_id = _network_with_session()
+    later = datetime(2026, 1, 1, 12, 10)
+    earlier = datetime(2026, 1, 1, 12, 1)
+
+    network.recordMeterReading(session_id, later, Decimal("2.0"))
+    network.recordMeterReading(session_id, earlier, Decimal("1.0"))
+
+    readings = network.sessions[session_id].meter_readings
+    assert [reading.timestamp for reading in readings] == [later, earlier]
+
+
+def test_record_meter_reading_replaces_same_timestamp_and_counts_replacement():
+    network, session_id = _network_with_session()
+    timestamp = datetime(2026, 1, 1, 12, 1)
+
+    network.recordMeterReading(session_id, timestamp, Decimal("1.0"))
+    replacement = network.recordMeterReading(session_id, timestamp, Decimal("1.5"))
+
+    session = network.sessions[session_id]
+    assert session.meter_readings == [replacement]
+    assert replacement.cumulative_kwh == Decimal("1.5")
+    assert session.replacement_count == 1

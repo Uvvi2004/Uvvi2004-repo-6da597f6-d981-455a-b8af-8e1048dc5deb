@@ -29,5 +29,6 @@ class ChargingSession:
     started_at: datetime
     stopped_at: datetime | None = None
     meter_readings: list[MeterReading] = field(default_factory=list)
+    replacement_count: int = 0
     status: str = "running"
     
